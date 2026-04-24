@@ -106,11 +106,11 @@ sed -i "/UUID=$ROOT_UUID.* btrfs/d" "$FSTAB"
 # Ajout des nouvelles lignes pour les subvolumes racine, home, log, cache, tmp
 cat <<EOF >> "$FSTAB"
 # Sous-volumes Btrfs pour /dev/sda1
-UUID=$ROOT_UUID /       btrfs rw,noatime,compress=zstd:3,subvol=@      0 1
-UUID=$ROOT_UUID /home   btrfs rw,noatime,compress=zstd:3,subvol=@home  0 2
-UUID=$ROOT_UUID /var/log btrfs rw,noatime,compress=zstd:3,subvol=@log 0 2
-UUID=$ROOT_UUID /var/cache btrfs rw,noatime,compress=zstd:3,subvol=@cache 0 2
-UUID=$ROOT_UUID /tmp    btrfs rw,noatime,compress=zstd:3,subvol=@tmp   0 2
+UUID=$ROOT_UUID /       btrfs rw,noatime,discard=async,compress=zstd:3,subvol=@      0 1
+UUID=$ROOT_UUID /home   btrfs rw,noatime,discard=async,compress=zstd:3,subvol=@home  0 2
+UUID=$ROOT_UUID /var/log btrfs rw,noatime,discard=async,compress=zstd:3,subvol=@log 0 2
+UUID=$ROOT_UUID /var/cache btrfs rw,noatime,discard=async,compress=zstd:3,subvol=@cache 0 2
+UUID=$ROOT_UUID /tmp    btrfs rw,noatime,discard=async,compress=zstd:3,subvol=@tmp   0 2
 EOF
 
 # Monte /dev/sda2 sur /boot pour mettre à jour grub
