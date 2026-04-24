@@ -1,47 +1,51 @@
 #!/bin/bash
 
 # --- Configuration ---
-TARGET="/target"
+MOUNT_POINT="/mnt/btrfs_setup"
 OPTIONS="noatime,compress=zstd:3,discard=async"
 
-echo "🚀 Détection de la configuration système..."
+echo "🔍 Recherche de la partition Btrfs..."
 
-# Récupération dynamique du périphérique et de l'UUID
-DEV=$(findmnt -n -o SOURCE "$TARGET")
+# Identification dynamique de la partition Btrfs
+DEV=$(blkid -t TYPE=btrfs -o device | head -n 1)
 UUID=$(blkid -s UUID -o value "$DEV")
 
-if [ -z "$UUID" ]; then
-    echo "❌ Erreur : Impossible de trouver l'UUID pour $TARGET. Est-ce que la partition est bien montée ?"
+if [ -z "$DEV" ]; then
+    echo "❌ Erreur : Aucune partition Btrfs détectée !"
     exit 1
 fi
 
-echo "📍 Périphérique détecté : $DEV"
-echo "🆔 UUID détecté : $UUID"
+echo "📍 Partition trouvée : $DEV"
+echo "🆔 UUID : $UUID"
 
-# 1. Création de la structure de sous-volumes
-cd "$TARGET" || exit
-echo "📦 Création des sous-volumes..."
+# 1. Montage de la racine de la partition
+sudo mkdir -p "$MOUNT_POINT"
+sudo mount "$DEV" "$MOUNT_POINT"
 
-# Création du root et déplacement du système
-btrfs subvolume create @
-find . -maxdepth 1 ! -name '@' ! -name '.' -exec mv {} @/ \;
+echo "📦 Restructuration en sous-volumes..."
+cd "$MOUNT_POINT" || exit
 
-# Création des autres points de montage
-btrfs subvolume create @home
-btrfs subvolume create @log
-btrfs subvolume create @cache
-btrfs subvolume create @tmp
+# Création du sous-volume racine @ et transfert des données
+if [ ! -d "@" ]; then
+    sudo btrfs subvolume create @
+    # On déplace tout vers @ sauf les dossiers système de la session Live et le dossier @ lui-même
+    sudo find . -maxdepth 1 ! -name '@' ! -name '.' -exec mv {} @/ \;
+fi
 
-# Migration des données existantes
-[ -d "@/home" ] && mv @/home/* @home/ 2>/dev/null
-[ -d "@/var/log" ] && mv @/var/log/* @log/ 2>/dev/null
-[ -d "@/var/cache" ] && mv @/var/cache/* @cache/ 2>/dev/null
+# Création des autres sous-volumes
+for sub in @home @log @cache @tmp; do
+    [ ! -d "$sub" ] && sudo btrfs subvolume create "$sub"
+done
 
-# 2. Génération du fstab dynamique
-echo "📝 Mise à jour du fichier /etc/fstab..."
-cat <<EOF > @/etc/fstab
+# Migration des données si elles existent (cas d'une installation fraîche)
+[ -d "@/home" ] && sudo mv @/home/* @home/ 2>/dev/null
+[ -d "@/var/log" ] && sudo mv @/var/log/* @log/ 2>/dev/null
+[ -d "@/var/cache" ] && sudo mv @/var/cache/* @cache/ 2>/dev/null
+
+# 2. Mise à jour du fstab
+echo "📝 Configuration du fichier /etc/fstab..."
+cat <<EOF | sudo tee @/etc/fstab
 # /etc/fstab: static file system information.
-# <file system> <mount point> <type> <options> <dump> <pass>
 UUID=$UUID /           btrfs $OPTIONS,subvol=@ 0 0
 UUID=$UUID /home       btrfs $OPTIONS,subvol=@home 0 0
 UUID=$UUID /var/log    btrfs $OPTIONS,subvol=@log 0 0
@@ -49,20 +53,24 @@ UUID=$UUID /var/cache  btrfs $OPTIONS,subvol=@cache 0 0
 UUID=$UUID /tmp        btrfs $OPTIONS,subvol=@tmp 0 0
 EOF
 
-# 3. Réparation de GRUB (Chroot)
-echo "🔧 Réinstallation de GRUB sur ${DEV%?}..." # Enlève le numéro de partition (ex: sda1 -> sda)
-# Montage des systèmes de fichiers virtuels
-for i in /dev /dev/pts /proc /sys /run; do mount -B $i @$i; done
+# 3. Réparation du Bootloader (GRUB)
+echo "🔧 Réparation de GRUB (Chroot)..."
+# Montage des partitions virtuelles pour le chroot
+for i in /dev /dev/pts /proc /sys /run; do sudo mount -B $i "@$i"; done
 
-# Exécution du chroot pour réparer le bootloader
-chroot @ /bin/bash <<CHROOT_EOF
-grub-install ${DEV%?}
+# On détecte le disque (ex: /dev/sda1 -> /dev/sda)
+DISK=$(echo "$DEV" | sed 's/[0-9]*$//')
+
+sudo chroot @ /bin/bash <<CHROOT_EOF
+grub-install $DISK
 update-grub
 CHROOT_EOF
 
-# Nettoyage
-for i in /run /sys /proc /dev/pts /dev; do umount @$i; done
+# Démontage propre
+echo "🧹 Nettoyage..."
+for i in /run /sys /proc /dev/pts /dev; do sudo umount "@$i"; done
+cd /
+sudo umount "$MOUNT_POINT"
 
 echo "---"
-echo "✅ Configuration terminée avec succès pour l'UUID $UUID !"
-echo "Tu peux maintenant démonter /target et redémarrer."
+echo "✅ Terminé ! Tu peux maintenant redémarrer ton PC normalement."
