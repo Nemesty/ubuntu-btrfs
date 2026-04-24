@@ -2,15 +2,25 @@
 
 # --- Configuration ---
 TARGET="/target"
-DEV="/dev/sda1"
-UUID="844149eb-3014-452d-bee0-4a5dc4d89a6a"
 OPTIONS="noatime,compress=zstd:3,discard=async"
 
-echo "🚀 Restructuration Btrfs et réparation du démarrage..."
+echo "🚀 Détection de la configuration système..."
+
+# Récupération dynamique du périphérique et de l'UUID
+DEV=$(findmnt -n -o SOURCE "$TARGET")
+UUID=$(blkid -s UUID -o value "$DEV")
+
+if [ -z "$UUID" ]; then
+    echo "❌ Erreur : Impossible de trouver l'UUID pour $TARGET. Est-ce que la partition est bien montée ?"
+    exit 1
+fi
+
+echo "📍 Périphérique détecté : $DEV"
+echo "🆔 UUID détecté : $UUID"
 
 # 1. Création de la structure de sous-volumes
-cd $TARGET
-echo "📦 Création des sous-volumes (@, @home, @log, @cache, @tmp)..."
+cd "$TARGET" || exit
+echo "📦 Création des sous-volumes..."
 
 # Création du root et déplacement du système
 btrfs subvolume create @
@@ -22,12 +32,12 @@ btrfs subvolume create @log
 btrfs subvolume create @cache
 btrfs subvolume create @tmp
 
-# Migration des données existantes vers les nouveaux sous-volumes
+# Migration des données existantes
 [ -d "@/home" ] && mv @/home/* @home/ 2>/dev/null
 [ -d "@/var/log" ] && mv @/var/log/* @log/ 2>/dev/null
 [ -d "@/var/cache" ] && mv @/var/cache/* @cache/ 2>/dev/null
 
-# 2. Génération du fstab (propre et sans swap)
+# 2. Génération du fstab dynamique
 echo "📝 Mise à jour du fichier /etc/fstab..."
 cat <<EOF > @/etc/fstab
 # /etc/fstab: static file system information.
@@ -40,13 +50,13 @@ UUID=$UUID /tmp        btrfs $OPTIONS,subvol=@tmp 0 0
 EOF
 
 # 3. Réparation de GRUB (Chroot)
-echo "🔧 Réinstallation de GRUB pour Btrfs..."
-# Montage des systèmes de fichiers virtuels nécessaires à GRUB
+echo "🔧 Réinstallation de GRUB sur ${DEV%?}..." # Enlève le numéro de partition (ex: sda1 -> sda)
+# Montage des systèmes de fichiers virtuels
 for i in /dev /dev/pts /proc /sys /run; do mount -B $i @$i; done
 
-# Exécution des commandes de réparation à l'intérieur du système
+# Exécution du chroot pour réparer le bootloader
 chroot @ /bin/bash <<CHROOT_EOF
-grub-install /dev/sda
+grub-install ${DEV%?}
 update-grub
 CHROOT_EOF
 
@@ -54,5 +64,5 @@ CHROOT_EOF
 for i in /run /sys /proc /dev/pts /dev; do umount @$i; done
 
 echo "---"
-echo "✅ Configuration terminée !"
+echo "✅ Configuration terminée avec succès pour l'UUID $UUID !"
 echo "Tu peux maintenant démonter /target et redémarrer."
